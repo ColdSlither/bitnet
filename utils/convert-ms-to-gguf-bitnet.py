@@ -1487,7 +1487,18 @@ def convert_model_names(model: LazyModel, params: Params, skip_unknown: bool) ->
 
     out: LazyModel = {}
     for name, lazy_tensor in model.items():
-        tensor_type, name_new = tmap.get_type_and_name(name, try_suffixes = (".weight", ".bias", ".weight_scale")) or (None, None)
+        # Handle weight_scale tensors: map to BITNET .scale naming convention
+        if name.endswith(".weight_scale"):
+            base_name = name[:-len("_scale")]  # model.layers.0.self_attn.q_proj.weight
+            tensor_type, name_new = tmap.get_type_and_name(base_name, try_suffixes = (".weight", ".bias")) or (None, None)
+            if name_new is not None:
+                # Replace .weight suffix with .scale for BITNET_25 convention
+                for sfx in (".weight", ".bias"):
+                    if name_new.endswith(sfx):
+                        name_new = name_new[:-len(sfx)] + ".scale"
+                        break
+        else:
+            tensor_type, name_new = tmap.get_type_and_name(name, try_suffixes = (".weight", ".bias")) or (None, None)
         if name_new is None:
             if skip_unknown:
                 logger.info(f"Unexpected tensor name: {name} - skipping")
@@ -1501,6 +1512,22 @@ def convert_model_names(model: LazyModel, params: Params, skip_unknown: bool) ->
         # logger.info(f"{name:48s} -> {name_new:40s} | {lazy_tensor.data_type.name:6s} | {lazy_tensor.shape}")
         # asasdsd
         out[name_new] = lazy_tensor
+
+    # Add dummy sub-norm tensors required by BITNET_25 architecture
+    # These are not in Llama3-8B-1.58 but the BITNET_25 loader requires them
+    n_embd = params.n_embd if hasattr(params, 'n_embd') else 4096
+    n_ff = params.n_ff if hasattr(params, 'n_ff') else 14336
+    for i in range(params.n_layer):
+        name_attn = f"blk.{i}.attn_sub_norm.weight"
+        if name_attn not in out:
+            arr = np.ones(n_embd, dtype=np.float32)
+            tensor = UnquantizedTensor(arr)
+            out[name_attn] = LazyTensor(lambda t=tensor: t, list(arr.shape), tensor.data_type, f"dummy attn_sub_norm layer {i}")
+        name_ffn = f"blk.{i}.ffn_sub_norm.weight"
+        if name_ffn not in out:
+            arr = np.ones(n_ff, dtype=np.float32)
+            tensor = UnquantizedTensor(arr)
+            out[name_ffn] = LazyTensor(lambda t=tensor: t, list(arr.shape), tensor.data_type, f"dummy ffn_sub_norm layer {i}")
 
     return out
 
