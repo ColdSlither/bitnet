@@ -1,6 +1,7 @@
 #include <vector>
 #include <type_traits>
 #include <assert.h>
+#define ACT_PARALLEL 1
 #include "ggml-bitnet.h"
 #include "ggml-quants.h"
 #include "gemm-config.h"
@@ -146,7 +147,8 @@ size_t quantize_i2_s(const float * src, void * dst, int64_t nrow, int64_t n_per_
     free(q8);
 
     // return size (keep same formula as quantize_i2_s)
-    return nrow * row_size / 4 + 32;
+    size_t ret = nrow * row_size / 4 + 32;
+    return ret;
 #endif
 #elif defined(__ARM_NEON)
     size_t row_size = ggml_row_size(GGML_TYPE_I2_S, n_per_row);
